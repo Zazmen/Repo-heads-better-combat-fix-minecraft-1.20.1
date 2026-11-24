@@ -1,0 +1,32 @@
+REPO HEADS + BETTER COMBAT FIX 1.1.0
+Minecraft 1.20.1 / Forge 47.4.0
+
+ЗАПУСК НА WINDOWS
+
+1. Распакуй ZIP. Открой папку, в которой лежат build.gradle и gradlew.bat.
+2. Установи JDK 17 x64, если его у тебя ещё нет. В PowerShell проверь:
+       java -version
+   Если установлено несколько версий Java, укажи JAVA_HOME на папку JDK 17
+   и открой новый PowerShell. В IntelliJ выбери JDK 17 как Gradle JVM.
+3. В PowerShell из папки проекта запусти:
+       .\gradlew.bat runClient
+   На Linux x64 команда такая:
+       ./gradlew runClient
+4. При первом запуске нужен интернет. Gradle скачает Forge, клиент Minecraft,
+   игровые ресурсы и пять зависимостей. Откроется отдельный клиент с локальным
+   профилем CompatTest. Для проверки создай одиночный мир и возьми меч.
+
+ГДЕ ЛЕЖАТ ФАЙЛЫ
+
+libs\repo-heads-combat-fix-1.1.0-forge-1.20.1.jar — оригинальный готовый JAR.
+run\mods — моды, с которыми запускается тестовый клиент.
+run\saves — миры тестового клиента.
+run\logs\latest.log — лог, если клиент не запустился.
+
+Чтобы проверить архив и скопировать готовый JAR в build\libs:
+    .\gradlew.bat build
+
+Этот Gradle-проект запускает и упаковывает готовый JAR. Для запуска в обычном
+лаунчере можно положить JAR из libs в папку mods профиля Forge 1.20.1
+вместе с Repo Heads, Better Combat, Player Animator, Simple Voice Chat
+и Cloth Config.

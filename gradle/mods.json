@@ -1,0 +1,27 @@
+[
+  {
+    "name": "player-animation-lib-forge-1.0.2-rc1+1.20.jar",
+    "url": "https://cdn.modrinth.com/data/gedNE4y2/versions/xe2EVE6q/player-animation-lib-forge-1.0.2-rc1%2B1.20.jar",
+    "sha256": "90d9965cb9efdbda29fdc5610be3914cf7008bf5c392ff34f7ab25f96a852691"
+  },
+  {
+    "name": "bettercombat-forge-1.9.0+1.20.1.jar",
+    "url": "https://cdn.modrinth.com/data/5sy6g3kz/versions/rnhiaw3t/bettercombat-forge-1.9.0%2B1.20.1.jar",
+    "sha256": "49c69dccf2c641246b4e3deca81ebac21f0ee119e81fc713b838b8e33569eea1"
+  },
+  {
+    "name": "repo-heads-forge-1.2.1+1.20.1.jar",
+    "url": "https://cdn.modrinth.com/data/Jaoe8qGe/versions/i0ycqAoU/repo-heads-forge-1.2.1%2B1.20.1.jar",
+    "sha256": "94ade73c49e0855a989c7dc1a5b93a46b1a9db2454a2de428f7ba79cd616c47e"
+  },
+  {
+    "name": "cloth-config-11.1.136-forge.jar",
+    "url": "https://cdn.modrinth.com/data/9s6osm5g/versions/t8TXrZvZ/cloth-config-11.1.136-forge.jar",
+    "sha256": "1e895e85cf5b1e1905ef3178ec155c8badfe22a1577b92c09143a5aa1f4ce0f2"
+  },
+  {
+    "name": "voicechat-forge-1.20.1-2.6.22.jar",
+    "url": "https://cdn.modrinth.com/data/9eGKb6K1/versions/S11m0QIb/voicechat-forge-1.20.1-2.6.22.jar",
+    "sha256": "727d31c11905be6af05686c619dd62a1ed4e451c47670cf5e9804c1ac8871386"
+  }
+]

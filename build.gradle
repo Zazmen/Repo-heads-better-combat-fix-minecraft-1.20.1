@@ -1,0 +1,247 @@
+import groovy.json.JsonSlurper
+
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+
+plugins {
+    id 'base'
+}
+
+def mcVersion = '1.20.1'
+def forgeVersion = '47.4.0'
+def forgeProfile = "${mcVersion}-forge-${forgeVersion}"
+def fixName = 'repo-heads-combat-fix-1.1.0-forge-1.20.1.jar'
+def fix = file("libs/${fixName}")
+def fixSha256 = '2c3c752e6700b14594dd7b205000e0b08a37f27bd31616624c553ab561107cbe'
+def runDir = file('run')
+def libraries = new File(runDir, 'libraries')
+def assets = new File(runDir, 'assets')
+def natives = new File(runDir, 'natives')
+def manifests = [
+    vanilla: new File(runDir, "versions/${mcVersion}/${mcVersion}.json"),
+    forge: new File(runDir, "versions/${forgeProfile}/${forgeProfile}.json")
+]
+def windows = System.getProperty('os.name').toLowerCase(Locale.ROOT).startsWith('windows')
+def os = windows ? 'windows' : 'linux'
+def javaExe = new File(System.getProperty('java.home'), windows ? 'bin/java.exe' : 'bin/java')
+def json = new JsonSlurper()
+def digest = { File file, String algorithm ->
+    byte[] bytes = MessageDigest.getInstance(algorithm).digest(file.bytes)
+    bytes.encodeHex().toString()
+}
+
+def fetch = { String address, File destination, String expectedHash ->
+    String algorithm = expectedHash?.length() == 40 ? 'SHA-1' : 'SHA-256'
+    if (destination.isFile() && (!expectedHash || digest(destination, algorithm) == expectedHash)) {
+        return
+    }
+    destination.parentFile.mkdirs()
+    File temporary = File.createTempFile('download-', '.tmp', destination.parentFile)
+    try {
+        def connection = new URI(address).toURL().openConnection()
+        connection.connectTimeout = 20000
+        connection.readTimeout = 60000
+        connection.setRequestProperty('User-Agent', 'RepoHeadsCombatFixGradle/1.1.0')
+        connection.inputStream.withCloseable { stream ->
+            Files.copy(stream, temporary.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+        if (expectedHash && digest(temporary, algorithm) != expectedHash) {
+            throw new GradleException("Checksum mismatch for ${destination.name}")
+        }
+        Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
+    } catch (Exception cause) {
+        throw new GradleException("Could not download ${destination.name} from ${address}", cause)
+    } finally {
+        temporary.delete()
+    }
+}
+
+def allowsLibrary = { library ->
+    if (!library.rules) {
+        return true
+    }
+    boolean allowed = false
+    for (rule in library.rules) {
+        if (rule.features) {
+            continue
+        }
+        if (rule.os?.name && rule.os.name != os) {
+            continue
+        }
+        if (rule.os?.arch && !(System.getProperty('os.arch') ==~ rule.os.arch)) {
+            continue
+        }
+        if (rule.os?.version && !(System.getProperty('os.version') ==~ rule.os.version)) {
+            continue
+        }
+        allowed = rule.action == 'allow'
+    }
+    allowed
+}
+
+def validateFix = {
+    if (!fix.isFile() || digest(fix, 'SHA-256') != fixSha256) {
+        throw new GradleException("Expected the original ${fixName} in libs/")
+    }
+}
+
+tasks.register('verifyFix') {
+    group = 'verification'
+    doLast { validateFix() }
+}
+
+tasks.register('packageFix', Copy) {
+    dependsOn 'verifyFix'
+    from fix
+    into layout.buildDirectory.dir('libs')
+}
+
+tasks.named('assemble') {
+    dependsOn 'packageFix'
+}
+
+tasks.register('prepareClient') {
+    group = 'minecraft'
+    description = 'Installs the isolated Forge 1.20.1 test client and its mods.'
+    dependsOn 'verifyFix'
+    doLast {
+        if (!(System.getProperty('os.arch') in ['amd64', 'x86_64'])
+                || (!windows && !System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('linux'))) {
+            throw new GradleException('The test launcher supports Windows x64 and Linux x64.')
+        }
+        fetch('https://piston-meta.mojang.com/v1/packages/ec3de95455ad63423a0e677057878c060471d07a/1.20.1.json', manifests.vanilla, null)
+        def vanilla = json.parse(manifests.vanilla)
+        def versionJar = new File(manifests.vanilla.parentFile, "${mcVersion}.jar")
+        fetch(vanilla.downloads.client.url, versionJar, vanilla.downloads.client.sha1)
+
+        def patch = new File(libraries, "net/minecraftforge/forge/${mcVersion}-${forgeVersion}/forge-${mcVersion}-${forgeVersion}-client.jar")
+        if (!manifests.forge.isFile() || !patch.isFile()) {
+            File installer = new File(runDir, "installer/forge-${mcVersion}-${forgeVersion}-installer.jar")
+            fetch(
+                    "https://maven.minecraftforge.net/net/minecraftforge/forge/${mcVersion}-${forgeVersion}/${installer.name}",
+                    installer,
+                    'f3f57465e2cbdc328193f77ba7f0c94cb64405f31ed556753d9275e8bdc06e2c'
+            )
+            File launcherProfiles = new File(runDir, 'launcher_profiles.json')
+            if (!launcherProfiles.exists()) {
+                launcherProfiles.setText('{"profiles":{}}', 'UTF-8')
+            }
+            exec {
+                workingDir runDir
+                commandLine javaExe, '-jar', installer, '--installClient', runDir
+            }
+            if (!manifests.forge.isFile() || !patch.isFile()) {
+                throw new GradleException('Forge installation did not produce its client profile.')
+            }
+        }
+
+        for (def library : vanilla.libraries.findAll(allowsLibrary)) {
+            def artifact = library.downloads.artifact
+            if (artifact) {
+                fetch(artifact.url, new File(libraries, artifact.path), artifact.sha1)
+            }
+        }
+        def index = vanilla.assetIndex
+        fetch(index.url, new File(assets, "indexes/${index.id}.json"), index.sha1)
+
+        def mods = new File(runDir, 'mods')
+        mods.mkdirs()
+        json.parse(file('gradle/mods.json')).each { mod ->
+            fetch(mod.url, new File(mods, mod.name), mod.sha256)
+        }
+        Files.copy(fix.toPath(), new File(mods, fixName).toPath(), StandardCopyOption.REPLACE_EXISTING)
+    }
+}
+
+tasks.register('downloadAssets') {
+    group = 'minecraft'
+    dependsOn 'prepareClient'
+    doLast {
+        def index = json.parse(manifests.vanilla).assetIndex
+        def assetObjects = json.parse(new File(assets, "indexes/${index.id}.json")).objects.values().unique { it.hash }
+        def missing = assetObjects.findAll {
+            def objectFile = new File(assets, "objects/${it.hash.take(2)}/${it.hash}")
+            !objectFile.isFile() || objectFile.length() != it.size
+        }
+        if (missing) {
+            logger.lifecycle("Downloading ${missing.size()} Minecraft assets.")
+            def pool = Executors.newFixedThreadPool(12)
+            try {
+                def calls = missing.collect { asset ->
+                    return {
+                        String path = "${asset.hash.take(2)}/${asset.hash}"
+                        fetch("https://resources.download.minecraft.net/${path}", new File(assets, "objects/${path}"), asset.hash)
+                        null
+                    } as Callable
+                }
+                pool.invokeAll(calls).each { it.get() }
+            } finally {
+                pool.shutdown()
+            }
+        }
+    }
+}
+
+tasks.register('runClient') {
+    group = 'minecraft'
+    description = 'Starts Minecraft Forge 1.20.1 with the bundled mod.'
+    dependsOn 'downloadAssets'
+    doLast {
+        def vanilla = json.parse(manifests.vanilla)
+        def forge = json.parse(manifests.forge)
+        def classpath = [:]
+        for (def library : (vanilla.libraries + forge.libraries).findAll(allowsLibrary)) {
+            def artifact = library.downloads.artifact
+            if (!artifact) {
+                continue
+            }
+            File libraryJar = new File(libraries, artifact.path)
+            if (!libraryJar.isFile()) {
+                fetch(artifact.url, libraryJar, artifact.sha1)
+            }
+            if (library.name.endsWith(":natives-${os}")) {
+                copy {
+                    from(zipTree(libraryJar)) {
+                        include '**/*.dll', '**/*.so'
+                        eachFile { it.path = it.name }
+                        includeEmptyDirs = false
+                    }
+                    into natives
+                }
+            } else if (!library.name.contains(':natives-')) {
+                classpath[library.name.split(':').take(2).join(':')] = libraryJar
+            }
+        }
+        classpath['minecraft:client-extra'] = new File(libraries, 'net/minecraft/client/1.20.1-20230612.114412/client-1.20.1-20230612.114412-extra.jar')
+        def launchClasspath = classpath.values().join(File.pathSeparator)
+        def jvmArgs = forge.arguments.jvm.findAll { it instanceof String }.collect {
+            it.replace('${library_directory}', libraries.absolutePath)
+                    .replace('${version_name}', forgeProfile)
+                    .replace('${classpath_separator}', File.pathSeparator)
+        }
+        def username = 'CompatTest'
+        def uuid = UUID.nameUUIDFromBytes("OfflinePlayer:${username}".getBytes('UTF-8')).toString().replace('-', '')
+        def clientArgs = [
+                    '-Xmx3G', "-Djava.library.path=${natives.absolutePath}",
+                    "-DlegacyClassPath=${launchClasspath}"
+            ] + jvmArgs + [
+                    '-cp', launchClasspath, forge.mainClass,
+                    '--version', forgeProfile, '--gameDir', runDir.absolutePath,
+                    '--assetsDir', assets.absolutePath, '--assetIndex', vanilla.assetIndex.id,
+                    '--username', username, '--uuid', uuid, '--accessToken', '0',
+                    '--userType', 'legacy', '--versionType', 'release'
+            ] + forge.arguments.game
+        // Keep the Windows command line short even when the project path is long.
+        def argFile = new File(runDir, 'client-args.txt')
+        argFile.setText(clientArgs.collect { arg ->
+            '"' + arg.toString().replace('\\', '\\\\').replace('"', '\\"') + '"'
+        }.join(System.lineSeparator()), java.nio.charset.Charset.defaultCharset().name())
+        exec {
+            workingDir runDir
+            commandLine javaExe, "@${argFile.absolutePath}"
+        }
+    }
+}
